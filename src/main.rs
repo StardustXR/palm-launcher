@@ -5,24 +5,23 @@ pub mod spatial_ref_exposer;
 use std::{
     env,
     f32::consts::{FRAC_PI_2, FRAC_PI_3, PI},
-    process::{Command, Stdio},
     str::FromStr,
 };
 
 use glam::{Quat, Vec3, vec3};
 use serde::{Deserialize, Serialize};
 use stardust_xr_asteroids::{
-    ClientState, Context, CustomElement, Migrate, Reify, Tasker, Transformable,
+    ClientState, Context, CustomElement, Entity, Migrate, Reify, Tasker, Transformable,
     client::run,
-    elements::{Grabbable, Lines, Spatial, Text},
+    components::Grabbable,
+    elements::{Lines, Spatial, Text},
 };
 use stardust_xr_fusion::{
+    client::FrameInfo,
     drawable::{Line, LinePoint},
-    fields::{CylinderShape, Shape},
-    node::NodeType,
-    root::RootAspect,
-    spatial::{SpatialRef, Transform},
-    values::color::rgba_linear,
+    fields::Shape,
+    spatial::{PartialTransform, SpatialExt, SpatialRef, Transform},
+    types::rgba_linear,
 };
 
 use crate::{
@@ -31,7 +30,7 @@ use crate::{
 
 #[tokio::main]
 async fn main() {
-    run::<PalmLauncher>(&[]).await;
+    run::<PalmLauncher>(&[]).await.unwrap();
 }
 #[derive(Debug, Serialize, Deserialize, Default)]
 enum Action {
@@ -62,28 +61,12 @@ impl FromStr for Target {
     }
 }
 impl Target {
-    fn spatial_ref_info(&self) -> (&'static str, &'static str, &'static str) {
+    fn spatial_ref_info(&self) -> &'static str {
         match self {
-            Target::HandLeft => (
-                "org.stardustxr.Hands",
-                "/org/stardustxr/Hand/left/palm",
-                "/org/stardustxr/Hand/left",
-            ),
-            Target::HandRight => (
-                "org.stardustxr.Hands",
-                "/org/stardustxr/Hand/right/palm",
-                "/org/stardustxr/Hand/right",
-            ),
-            Target::ControllerLeft => (
-                "org.stardustxr.Controllers",
-                "/org/stardustxr/Controller/left",
-                "/org/stardustxr/Controller/left",
-            ),
-            Target::ControllerRight => (
-                "org.stardustxr.Controllers",
-                "/org/stardustxr/Controller/right",
-                "/org/stardustxr/Controller/right",
-            ),
+            Target::HandLeft => "stardust-hand/left",
+            Target::HandRight => "stardust-hand/right",
+            Target::ControllerLeft => "stardust-controller/left",
+            Target::ControllerRight => "stardust-controller/right",
         }
     }
     fn offset(&self) -> (Vec3, Quat) {
@@ -127,10 +110,11 @@ impl Reify for PalmLauncher {
         context: &Context,
         _tasks: impl Tasker<Self>,
     ) -> impl stardust_xr_asteroids::Element<Self> {
-        let (name, spatial_path, tracked_path) = self.target.spatial_ref_info();
+        let name = self.target.spatial_ref_info();
         let (pos, rot) = self.target.offset();
-        ExternalSpatialRef::new(name, spatial_path, Some(tracked_path))
+        ExternalSpatialRef::new(name)
             .tracked_changed(|state: &mut PalmLauncher, tracked| {
+                println!("tracked state changed: {tracked}");
                 state.visible = tracked;
                 state.pos = Vec3::ZERO;
                 state.rot = Quat::IDENTITY;
@@ -138,6 +122,7 @@ impl Reify for PalmLauncher {
             })
             .build()
             .maybe_child(self.visible.then(|| {
+                let client = context.stardust_client.clone();
                 Spatial::default()
                     .pos(pos)
                     .rot(rot)
@@ -200,58 +185,65 @@ impl Reify for PalmLauncher {
                         .build()
                     }))
                     .child(
-                        Grabbable::new(
-                            Shape::Cylinder(CylinderShape {
-                                length: 0.02,
-                                radius: 0.002,
-                            }),
-                            self.pos,
-                            self.rot,
-                            |state: &mut PalmLauncher, pos, rot| {
-                                state.pos = pos.into();
-                                state.rot = rot.into()
-                            },
-                        )
-                        .max_distance(0.025)
-                        .reparentable(false)
-                        .grab_stop(|state: &mut PalmLauncher| {
-                            if let Action::Command(cmd) = &state.state {
-                                let cmd = cmd.clone();
-                                let spatial_ref = state.handle_ref.clone().unwrap();
-                                let pos = state.pos;
-                                tokio::spawn(async move {
-                                    let root = spatial_ref.client().get_root();
-                                    let quat = Quat::from_rotation_arc(Vec3::Y, pos.normalize())
-                                        * Quat::from_rotation_z(FRAC_PI_2);
-                                    let spatial = stardust_xr_fusion::spatial::Spatial::create(
-                                        &spatial_ref,
-                                        Transform::from_translation_rotation(pos * 0.5, quat),
-                                    )
-                                    .unwrap();
-                                    let token = root
-                                        .generate_state_token(
-                                            stardust_xr_fusion::root::ClientState::from_root(
-                                                &spatial,
-                                            )
-                                            .unwrap(),
-                                        )
-                                        .await
-                                        .unwrap();
-                                    Command::new("sh")
-                                        .arg("-c")
-                                        .env("STARDUST_STARTUP_TOKEN", token)
-                                        .arg(format!("{cmd} &"))
-                                        .stdin(Stdio::null())
-                                        .stdout(Stdio::null())
-                                        .stderr(Stdio::null())
-                                        .spawn()
-                                        .unwrap();
-                                });
-                            }
-                            state.pos = Vec3::ZERO;
-                            state.rot = Quat::IDENTITY;
-                            state.state = Action::Nothing;
+                        Entity::new(Shape::Cylinder {
+                            length: 0.02,
+                            radius: 0.002,
                         })
+                        .pos(self.pos)
+                        .rot(self.rot)
+                        .component(
+                            Grabbable::new(
+                                Vec3::ZERO,
+                                Quat::IDENTITY,
+                                |state: &mut PalmLauncher, pos, rot| {
+                                    state.pos = pos.into();
+                                    state.rot = rot.into()
+                                },
+                            )
+                            .max_distance(0.025)
+                            .grab_stop(
+                                move |state: &mut PalmLauncher| {
+                                    let client = client.clone();
+                                    if let Action::Command(cmd) = &state.state {
+                                        let cmd = cmd.clone();
+                                        let spatial_ref = state.handle_ref.clone().unwrap();
+                                        let pos = state.pos;
+                                        tokio::spawn(async move {
+                                            let (spatial, spatial_ref) =
+                                                stardust_xr_fusion::spatial::Spatial::new(
+                                                    &client,
+                                                    &spatial_ref,
+                                                    Transform::from_translation(pos * 0.5),
+                                                )
+                                                .await
+                                                .unwrap();
+
+                                            _ = spatial.set_relative_transform(
+                                                client.root().clone(),
+                                                PartialTransform::from_rotation_scale(
+                                                    Quat::IDENTITY,
+                                                    Vec3::ONE,
+                                                ),
+                                            );
+                                            let token = client
+                                                .generate_startup_token(spatial_ref)
+                                                .await
+                                                .unwrap();
+                                            // TODO: should this use "sh -c {cmd}" to run the thingy?
+                                            protostar_launcher::launch(
+                                                cmd.into(),
+                                                [("STARDUST_STARTUP_TOKEN".to_string(), token)],
+                                            )
+                                            .await;
+                                        });
+                                    }
+                                    state.pos = Vec3::ZERO;
+                                    state.rot = Quat::IDENTITY;
+                                    println!("grab stopped");
+                                    state.state = Action::Nothing;
+                                },
+                            ),
+                        )
                         .build()
                         .child(
                             Lines::new([Line {
@@ -291,7 +283,7 @@ impl ClientState for PalmLauncher {
         self.commands = args;
     }
 
-    fn on_frame(&mut self, _info: &stardust_xr_fusion::root::FrameInfo) {
+    fn on_frame(&mut self, _info: &FrameInfo) {
         let v = 0.5 / self.commands.len() as f32;
         let index = (self.pos.length() / v).floor() as usize;
         self.state = if index == 0 {

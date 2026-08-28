@@ -1,29 +1,25 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, future::ready};
 
+use gluon::{Handler, Node, RefExt};
 use stardust_xr_asteroids::{CustomElement, FnWrapper, ValidState};
 use stardust_xr_fusion::{
-    node::{NodeError, NodeType},
-    objects::SpatialRefProxyExt,
-    spatial::{Spatial, SpatialAspect, Transform},
+    client::FrameInfo,
+    spatial::Spatial,
+    tracked::{
+        Tracked, TrackedExt, TrackedGuard, TrackedStateReceiver, TrackedStateReceiverHandler,
+    },
 };
-use stardust_xr_gluon::{AbortOnDrop, interfaces::SpatialRefProxy};
-use stardust_xr_molecules::tracked::TrackedProxy;
 use tokio::sync::mpsc;
-use tokio_stream::StreamExt as _;
 
 #[derive(Debug)]
 pub struct ExternalSpatialRef<State: ValidState + Debug> {
-    well_known_name: String,
-    spatial_path: String,
-    tracked_path: Option<String>,
+    tracked_path: String,
     tracked_changed: Option<FnWrapper<dyn Fn(&mut State, bool) + Send + Sync + 'static>>,
 }
 impl<State: ValidState + Debug> ExternalSpatialRef<State> {
-    pub fn new(well_known_name: &str, spatial_path: &str, tracked_path: Option<&str>) -> Self {
+    pub fn new(tracked_service_path: &str) -> Self {
         Self {
-            well_known_name: well_known_name.to_string(),
-            spatial_path: spatial_path.to_string(),
-            tracked_path: tracked_path.map(|v| v.to_string()),
+            tracked_path: tracked_service_path.to_string(),
             tracked_changed: None,
         }
     }
@@ -36,66 +32,57 @@ impl<State: ValidState + Debug> ExternalSpatialRef<State> {
     }
 }
 pub struct ExternalSpatialRefInner {
-    spatial: Spatial,
+    _spatial: Spatial,
     tracked_changed_recv: mpsc::UnboundedReceiver<bool>,
-    _task: AbortOnDrop,
+    _guard: TrackedGuard,
+    _node: Node<TrackedSpatialHandler>,
 }
+
 impl<State: ValidState + Debug> CustomElement<State> for ExternalSpatialRef<State> {
     type Inner = ExternalSpatialRefInner;
 
-    type Resource = ();
+    type Error = stardust_xr_fusion::Error;
 
-    type Error = NodeError;
-
-    fn create_inner(
+    async fn create_inner(
         &self,
-        asteroids_context: &stardust_xr_asteroids::Context,
+        _ctx: &stardust_xr_asteroids::Context,
         info: stardust_xr_asteroids::CreateInnerInfo,
-        _resource: &mut Self::Resource,
     ) -> Result<Self::Inner, Self::Error> {
-        let spatial = Spatial::create(info.parent_space, Transform::identity())?;
+        let spatial = info.child_space;
         let (tx, rx) = mpsc::unbounded_channel();
-        let task = tokio::spawn({
-            let spatial = spatial.clone();
-            let conn = asteroids_context.dbus_connection.clone();
-            let name = self.well_known_name.clone();
-            let spatial_path = self.spatial_path.clone();
-            let tracked_path = self.tracked_path.clone();
-            async move {
-                let Ok(spatial_ref) = SpatialRefProxy::new(&conn, name.as_str(), spatial_path)
-                    .await
-                    .inspect_err(|err| {
-                        println!("ERROR: failed to get external spatial ref: {err}")
-                    })
-                else {
-                    return;
-                };
-                let spatial_ref = spatial_ref.import(spatial.client()).await.unwrap();
-                spatial.set_spatial_parent(&spatial_ref).unwrap();
-                if let Some(path) = tracked_path
-                    && let Ok(proxy) = TrackedProxy::new(&conn, name, path).await
-                {
-                    _ = tx.send(proxy.is_tracked().await.unwrap_or(true)).unwrap();
-                    let mut stream = proxy.receive_is_tracked_changed().await;
-                    while let Some(tracked) = stream.next().await {
-                        _ = tx.send(tracked.get().await.unwrap_or(true)).unwrap();
-                    }
-                }
-            }
-        })
-        .into();
+        let tracked = Tracked::binding(&self.tracked_path).await?;
+        let (node, recv) = TrackedStateReceiver::new_node(TrackedSpatialHandler { sender: tx })?;
+        let (spatial_ref, guard, currently_tracked) = tracked.get(recv.into_proxy()).await?;
+        _ = node.sender.send(currently_tracked);
+        _ = spatial.set_parent(spatial_ref);
         Ok(ExternalSpatialRefInner {
-            spatial,
+            _spatial: spatial,
             tracked_changed_recv: rx,
-            _task: task,
+            _guard: guard,
+            _node: node,
         })
     }
 
-    fn diff(&self, _old_self: &Self, _inner: &mut Self::Inner, _resource: &mut Self::Resource) {}
+    fn diff(
+        &self,
+        _old_self: &Self,
+        _context: &stardust_xr_asteroids::Context,
+        _inner: &mut Self::Inner,
+    ) {
+        // TODO: recreate tracked on path change
+        // if self.tracked_path != old_self.tracked_path {
+        //     let tracked = Tracked::binding(&self.tracked_path).await?;
+        //     let (node, recv) =
+        //         TrackedStateReceiver::new_node(TrackedSpatialHandler { sender: tx })?;
+        //     let (spatial_ref, guard, currently_tracked) = tracked.get(recv.into_proxy()).await?;
+        //     _ = node.sender.send(currently_tracked);
+        //     _ = inner.spatial.set_parent(spatial_ref);
+        // }
+    }
     fn frame(
         &self,
         _context: &stardust_xr_asteroids::Context,
-        _info: &stardust_xr_fusion::root::FrameInfo,
+        _info: &FrameInfo,
         state: &mut State,
         inner: &mut Self::Inner,
     ) {
@@ -105,8 +92,19 @@ impl<State: ValidState + Debug> CustomElement<State> for ExternalSpatialRef<Stat
             }
         }
     }
+}
 
-    fn spatial_aspect(&self, inner: &Self::Inner) -> stardust_xr_fusion::spatial::SpatialRef {
-        inner.spatial.clone().as_spatial_ref()
+#[derive(Handler)]
+struct TrackedSpatialHandler {
+    sender: mpsc::UnboundedSender<bool>,
+}
+impl TrackedStateReceiverHandler for TrackedSpatialHandler {
+    fn tracked(
+        &self,
+        _ctx: gluon::Context,
+        tracked: bool,
+    ) -> impl Future<Output = ()> + Send + Sync {
+        _ = self.sender.send(tracked);
+        ready(())
     }
 }

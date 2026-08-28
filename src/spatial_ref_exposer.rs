@@ -1,10 +1,7 @@
 use std::fmt::Debug;
 
 use stardust_xr_asteroids::{CustomElement, FnWrapper, ValidState};
-use stardust_xr_fusion::{
-    node::NodeError,
-    spatial::{Spatial, SpatialRef, Transform},
-};
+use stardust_xr_fusion::{client::FrameInfo, spatial::SpatialRef};
 
 #[derive(Debug)]
 pub struct SpatialRefExposer<State: ValidState + Debug>(
@@ -17,33 +14,33 @@ impl<State: ValidState + Debug> SpatialRefExposer<State> {
     }
 }
 impl<State: ValidState + Debug> CustomElement<State> for SpatialRefExposer<State> {
-    type Inner = Spatial;
+    type Inner = SpatialRef;
 
-    type Resource = ();
+    type Error = stardust_xr_fusion::Error;
 
-    type Error = NodeError;
-
-    fn create_inner(
+    async fn create_inner(
         &self,
         _asteroids_context: &stardust_xr_asteroids::Context,
         info: stardust_xr_asteroids::CreateInnerInfo,
-        _resource: &mut Self::Resource,
     ) -> Result<Self::Inner, Self::Error> {
-        Spatial::create(info.parent_space, Transform::identity())
+        Ok(info.child_space.spatial_ref().await?)
     }
 
-    fn diff(&self, _old_self: &Self, _inner: &mut Self::Inner, _resource: &mut Self::Resource) {}
-
-    fn spatial_aspect(&self, inner: &Self::Inner) -> SpatialRef {
-        inner.clone().as_spatial_ref()
+    fn diff(
+        &self,
+        _old_self: &Self,
+        _asteroids_context: &stardust_xr_asteroids::Context,
+        _inner: &mut Self::Inner,
+    ) {
     }
+
     fn frame(
         &self,
         _context: &stardust_xr_asteroids::Context,
-        _info: &stardust_xr_fusion::root::FrameInfo,
+        _info: &FrameInfo,
         state: &mut State,
         inner: &mut Self::Inner,
     ) {
-        self.0.0(state, inner.clone().as_spatial_ref());
+        self.0.0(state, inner.clone());
     }
 }

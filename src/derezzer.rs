@@ -1,24 +1,25 @@
-use glam::{Vec3, vec2};
+use std::future::ready;
+
+use glam::Vec3;
+use gluon::{Handler, Interface, Node, RefExt};
 use stardust_xr_asteroids::{Context, CustomElement, ValidState};
 use stardust_xr_fusion::{
-    ClientHandle,
-    fields::{FieldRef, FieldRefAspect},
-    node::{NodeError, NodeType},
-    root::FrameInfo,
-    spatial::{Spatial, SpatialAspect, SpatialRef, SpatialRefAspect, Transform},
-    values::{Quaternion, Vector3},
+    fields::RayMarchResult,
+    query::{InterfaceDependency, QueriedInterface, QueryableId},
+    spatial::{PartialTransform, Spatial},
+    spatial_query::{BeamQuery, BeamQueryHandle, BeamQueryHandler, BeamQueryHandlerHandler},
+    types::{QuatF, Vec3F},
 };
-use stardust_xr_gluon::{ObjectEventStreamExt, WatchHandle};
-use stardust_xr_molecules::DerezzableHandlerProxy;
+use stardust_xr_molecules::derezzable::protocol::Derezzable;
 
 #[derive(Debug)]
 pub struct Derezzer {
-    pos: Vector3<f32>,
-    rot: Quaternion,
+    pos: Vec3F,
+    rot: QuatF,
     length: f32,
 }
 impl Derezzer {
-    pub fn new(pos: impl Into<Vector3<f32>>, rot: impl Into<Quaternion>, length: f32) -> Self {
+    pub fn new(pos: impl Into<Vec3F>, rot: impl Into<QuatF>, length: f32) -> Self {
         Self {
             pos: pos.into(),
             rot: rot.into(),
@@ -30,95 +31,108 @@ impl Derezzer {
 impl<State: ValidState> CustomElement<State> for Derezzer {
     type Inner = DerezzerInner;
 
-    type Resource = ();
+    type Error = stardust_xr_fusion::Error;
 
-    type Error = NodeError;
-
-    fn create_inner(
+    async fn create_inner(
         &self,
-        asteroids_context: &Context,
+        ctx: &Context,
         info: stardust_xr_asteroids::CreateInnerInfo,
-        _resource: &mut Self::Resource,
     ) -> Result<Self::Inner, Self::Error> {
-        let client = info.parent_space.client();
-        let query = asteroids_context
-            .object_registry
-            .query::<_, ClientHandle>(client.clone())
-            .watch();
-        let spatial = Spatial::create(
-            info.parent_space,
-            Transform::from_translation_rotation(self.pos, self.rot),
-        )?;
-        Ok(DerezzerInner { spatial, query })
+        let client = ctx.stardust_client.clone();
+        let (query_handler, query_ref) = BeamQueryHandler::new_node(DerezzerQuery)?;
+        let query_handle = client
+            .spatial_query_interface()
+            .beam_query(BeamQuery {
+                handler: query_ref.into_proxy(),
+                interfaces: vec![InterfaceDependency {
+                    id: Derezzable::ID.into(),
+                    optional: false,
+                }],
+                reference_spatial: info.child_space.spatial_ref().await?,
+                origin: Vec3::ZERO.into(),
+                direction: Vec3::Y.into(),
+                max_length: self.length,
+            })
+            .await?
+            // TODO: replace this?
+            .unwrap();
+        Ok(DerezzerInner {
+            spatial: info.child_space,
+            query_handler,
+            query_handle,
+        })
     }
 
-    fn diff(&self, old_self: &Self, inner: &mut Self::Inner, _resource: &mut Self::Resource) {
+    fn diff(&self, old_self: &Self, _context: &Context, inner: &mut Self::Inner) {
         if self.pos != old_self.pos {
             _ = inner
                 .spatial
-                .set_local_transform(Transform::from_translation(self.pos));
+                .set_local_transform(PartialTransform::from_translation(self.pos));
         }
         if self.rot != old_self.rot {
             _ = inner
                 .spatial
-                .set_local_transform(Transform::from_rotation(self.rot));
+                .set_local_transform(PartialTransform::from_rotation(self.rot));
         }
-    }
-    fn frame(
-        &self,
-        _context: &Context,
-        _info: &FrameInfo,
-        _state: &mut State,
-        inner: &mut Self::Inner,
-    ) {
-        let ref_space_spatial = inner.spatial.clone();
-        let distance = self.length;
-        let derezzables = inner
-            .query
-            .watch
-            .borrow()
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        tokio::spawn({
-            async move {
-                for (derezzable, field, spatial) in derezzables {
-                    if let Some(field) = field {
-                        if field
-                            .ray_march(&ref_space_spatial, Vec3::ZERO, Vec3::Y)
-                            .await
-                            .is_ok_and(|v| {
-                                v.min_distance <= 0.001 && v.deepest_point_distance <= distance
-                            })
-                        {
-                            _ = derezzable.derez().await;
-                        }
-                    } else {
-                        let Ok(transform) = spatial.get_transform(&ref_space_spatial).await else {
-                            continue;
-                        };
-                        if transform.translation.is_some_and(|p| {
-                            dbg!(p);
-                            p.y <= distance && p.y >= 0.0 && vec2(p.x, p.z).length() < 0.01
-                        }) {
-                            _ = derezzable.derez().await;
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    fn spatial_aspect(&self, inner: &Self::Inner) -> SpatialRef {
-        inner.spatial.clone().as_spatial_ref()
+        if self.length != old_self.length {
+            _ = inner
+                .query_handle
+                .update(Vec3::ZERO.into(), Vec3::Y.into(), self.length);
+        }
     }
 }
 
 pub struct DerezzerInner {
-    query: WatchHandle<(
-        DerezzableHandlerProxy<'static>,
-        Option<FieldRef>,
-        SpatialRef,
-    )>,
     spatial: Spatial,
+    query_handler: Node<DerezzerQuery>,
+    query_handle: BeamQueryHandle,
+}
+#[derive(Handler)]
+pub struct DerezzerQuery;
+impl BeamQueryHandlerHandler for DerezzerQuery {
+    fn intersected(
+        &self,
+        _ctx: gluon::Context,
+        _obj: stardust_xr_fusion::query::QueryableId,
+        _field: stardust_xr_fusion::fields::FieldRef,
+        _spatial: stardust_xr_fusion::spatial::SpatialRef,
+        interfaces: Vec<stardust_xr_fusion::query::QueriedInterface>,
+        _spatial_info: stardust_xr_fusion::fields::RayMarchResult,
+    ) -> impl Future<Output = ()> {
+        let Some(derezzable) = interfaces
+            .into_iter()
+            .find(|v| v.interface_id == Derezzable::ID)
+            .map(|v| Derezzable::from_ref(v.interface))
+        else {
+            return ready(());
+        };
+        _ = derezzable.derez();
+        ready(())
+    }
+
+    fn interfaces_changed(
+        &self,
+        _ctx: gluon::Context,
+        _obj: QueryableId,
+        _interfaces: Vec<QueriedInterface>,
+    ) -> impl Future<Output = ()> + Send + Sync {
+        ready(())
+    }
+
+    fn moved(
+        &self,
+        _ctx: gluon::Context,
+        _obj: QueryableId,
+        _spatial_info: RayMarchResult,
+    ) -> impl Future<Output = ()> + Send + Sync {
+        ready(())
+    }
+
+    fn left(
+        &self,
+        _ctx: gluon::Context,
+        _obj: QueryableId,
+    ) -> impl Future<Output = ()> + Send + Sync {
+        ready(())
+    }
 }
