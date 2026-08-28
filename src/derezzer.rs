@@ -50,7 +50,7 @@ impl<State: ValidState> CustomElement<State> for Derezzer {
                 }],
                 reference_spatial: info.child_space.spatial_ref().await?,
                 origin: Vec3::ZERO.into(),
-                direction: Vec3::Y.into(),
+                direction: Vec3::NEG_Z.into(),
                 max_length: self.length,
             })
             .await?
@@ -77,7 +77,7 @@ impl<State: ValidState> CustomElement<State> for Derezzer {
         if self.length != old_self.length {
             _ = inner
                 .query_handle
-                .update(Vec3::ZERO.into(), Vec3::Y.into(), self.length);
+                .update(Vec3::ZERO.into(), Vec3::NEG_Z.into(), self.length);
         }
     }
 }

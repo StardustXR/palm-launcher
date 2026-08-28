@@ -14,7 +14,7 @@ use stardust_xr_asteroids::{
     ClientState, Context, CustomElement, Entity, Migrate, Reify, Tasker, Transformable,
     client::run,
     components::Grabbable,
-    elements::{Lines, Spatial, Text},
+    elements::{Axes, Lines, Spatial, Text},
 };
 use stardust_xr_fusion::{
     client::FrameInfo,
@@ -111,6 +111,7 @@ impl Reify for PalmLauncher {
         _tasks: impl Tasker<Self>,
     ) -> impl stardust_xr_asteroids::Element<Self> {
         let name = self.target.spatial_ref_info();
+        // TODO: the coordinate space this makes is kinda terrible, should probabl be fixed
         let (pos, rot) = self.target.offset();
         ExternalSpatialRef::new(name)
             .tracked_changed(|state: &mut PalmLauncher, tracked| {
@@ -121,12 +122,14 @@ impl Reify for PalmLauncher {
                 state.state = Action::Nothing;
             })
             .build()
+            // .child(Axes::default().build())
             .maybe_child(self.visible.then(|| {
                 let client = context.stardust_client.clone();
                 Spatial::default()
                     .pos(pos)
                     .rot(rot)
                     .build()
+                    // .child(Axes::default().build())
                     .child(
                         Lines::new([Line {
                             points: {
@@ -179,7 +182,7 @@ impl Reify for PalmLauncher {
                     .maybe_child(matches!(self.state, Action::Destroy).then(|| {
                         Derezzer::new(
                             Vec3::ZERO,
-                            Quat::from_rotation_arc(Vec3::Y, self.pos.normalize()),
+                            Quat::from_rotation_arc(Vec3::NEG_Z, self.pos.normalize()),
                             self.pos.length(),
                         )
                         .build()
