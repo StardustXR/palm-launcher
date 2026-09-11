@@ -52,13 +52,14 @@ impl<State: ValidState> CustomElement<State> for Derezzer {
                 origin: Vec3::ZERO.into(),
                 direction: Vec3::NEG_Z.into(),
                 max_length: self.length,
+                margin: 0.0,
             })
             .await?
             // TODO: replace this?
             .unwrap();
         Ok(DerezzerInner {
             spatial: info.child_space,
-            query_handler,
+            _query_handler: query_handler,
             query_handle,
         })
     }
@@ -77,14 +78,14 @@ impl<State: ValidState> CustomElement<State> for Derezzer {
         if self.length != old_self.length {
             _ = inner
                 .query_handle
-                .update(Vec3::ZERO.into(), Vec3::NEG_Z.into(), self.length);
+                .update(Vec3::ZERO.into(), Vec3::NEG_Z.into(), self.length, 0.0);
         }
     }
 }
 
 pub struct DerezzerInner {
     spatial: Spatial,
-    query_handler: Node<DerezzerQuery>,
+    _query_handler: Node<DerezzerQuery>,
     query_handle: BeamQueryHandle,
 }
 #[derive(Handler)]

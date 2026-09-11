@@ -14,7 +14,7 @@ use stardust_xr_asteroids::{
     ClientState, Context, CustomElement, Entity, Migrate, Reify, Tasker, Transformable,
     client::run,
     components::Grabbable,
-    elements::{Axes, Lines, Spatial, Text},
+    elements::{Lines, Spatial, Text},
 };
 use stardust_xr_fusion::{
     client::FrameInfo,
@@ -195,14 +195,10 @@ impl Reify for PalmLauncher {
                         .pos(self.pos)
                         .rot(self.rot)
                         .component(
-                            Grabbable::new(
-                                Vec3::ZERO,
-                                Quat::IDENTITY,
-                                |state: &mut PalmLauncher, pos, rot| {
-                                    state.pos = pos.into();
-                                    state.rot = rot.into()
-                                },
-                            )
+                            Grabbable::new(|state: &mut PalmLauncher, pose| {
+                                state.pos = pose.position.into();
+                                state.rot = pose.orientation.into()
+                            })
                             .max_distance(0.025)
                             .grab_stop(
                                 move |state: &mut PalmLauncher| {
