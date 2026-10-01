@@ -5,13 +5,18 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "rt", "macros"] }
-stardust-xr-asteroids = { git = "https://github.com/StardustXR/asteroids", branch = "refactor/strongipc" }
 serde = { version = "1.0.228", features = ["derive"] }
-stardust-xr-fusion = { git = "https://github.com/StardustXR/core", branch = "refactor/strongipc" }
-gluon = { git = "https://github.com/technobaboo/gluon", branch = "refactor/strongipc" }
-stardust-xr-molecules = { git = "https://github.com/StardustXR/molecules", branch = "refactor/strongipc" }
-protostar-launcher = { git = "https://github.com/StardustXR/protostar", branch = "refactor/strongipc" }
+# stardust-xr-asteroids = { git = "https://github.com/StardustXR/asteroids", version="0.52" }
+# stardust-xr-fusion = { git = "https://github.com/StardustXR/core", version="0.52" }
+# gluon-ipc = { git = "https://github.com/stardustxr/gluon-ipc" }
+# stardust-xr-molecules = { git = "https://github.com/StardustXR/molecules", version="0.52" }
+# protostar-launcher = { git = "https://github.com/StardustXR/protostar", version="0.1" }
+stardust-xr-asteroids = "0.52"
+stardust-xr-fusion = "0.52" 
+gluon-ipc = "0.1"
+stardust-xr-molecules = "0.52" 
+protostar-launcher = { git = "https://github.com/StardustXR/protostar", version="0.1" }
 
-glam = { version = "0.32.0", features = ["mint", "serde"] }
+glam = { version = "0.33.0", features = ["mint", "serde"] }
 tokio-stream = "0.1.18"
 tracing = "0.1.44"

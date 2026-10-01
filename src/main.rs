@@ -109,6 +109,7 @@ impl Reify for PalmLauncher {
         &self,
         context: &Context,
         _tasks: impl Tasker<Self>,
+		// _props: (),
     ) -> impl stardust_xr_asteroids::Element<Self> {
         let name = self.target.spatial_ref_info();
         // TODO: the coordinate space this makes is kinda terrible, should probabl be fixed
@@ -199,7 +200,7 @@ impl Reify for PalmLauncher {
                                 state.pos = pose.position.into();
                                 state.rot = pose.orientation.into()
                             })
-                            .max_distance(0.025)
+                            .max_distance(0.025f32)
                             .grab_stop(
                                 move |state: &mut PalmLauncher| {
                                     let client = client.clone();

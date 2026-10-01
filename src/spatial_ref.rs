@@ -1,6 +1,6 @@
 use std::{fmt::Debug, future::ready};
 
-use gluon::{Handler, Node, RefExt};
+use gluon_ipc::{Handler, Node, RefExt};
 use stardust_xr_asteroids::{CustomElement, FnWrapper, ValidState};
 use stardust_xr_fusion::{
     client::FrameInfo,
@@ -101,7 +101,7 @@ struct TrackedSpatialHandler {
 impl TrackedStateReceiverHandler for TrackedSpatialHandler {
     fn tracked(
         &self,
-        _ctx: gluon::Context,
+        _ctx: gluon_ipc::Context,
         tracked: bool,
     ) -> impl Future<Output = ()> + Send + Sync {
         _ = self.sender.send(tracked);

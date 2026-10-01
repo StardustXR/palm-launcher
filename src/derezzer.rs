@@ -1,7 +1,7 @@
 use std::future::ready;
 
 use glam::Vec3;
-use gluon::{Handler, Interface, Node, RefExt};
+use gluon_ipc::{Handler, Interface, Node, RefExt};
 use stardust_xr_asteroids::{Context, CustomElement, ValidState};
 use stardust_xr_fusion::{
     fields::RayMarchResult,
@@ -78,7 +78,7 @@ impl<State: ValidState> CustomElement<State> for Derezzer {
         if self.length != old_self.length {
             _ = inner
                 .query_handle
-                .update(Vec3::ZERO.into(), Vec3::NEG_Z.into(), self.length, 0.0);
+                .update(Vec3::ZERO.into(), Vec3::NEG_Z.into(), self.length, 0.0f32);
         }
     }
 }
@@ -93,7 +93,7 @@ pub struct DerezzerQuery;
 impl BeamQueryHandlerHandler for DerezzerQuery {
     fn intersected(
         &self,
-        _ctx: gluon::Context,
+        _ctx: gluon_ipc::Context,
         _obj: stardust_xr_fusion::query::QueryableId,
         _field: stardust_xr_fusion::fields::FieldRef,
         _spatial: stardust_xr_fusion::spatial::SpatialRef,
@@ -113,7 +113,7 @@ impl BeamQueryHandlerHandler for DerezzerQuery {
 
     fn interfaces_changed(
         &self,
-        _ctx: gluon::Context,
+        _ctx: gluon_ipc::Context,
         _obj: QueryableId,
         _interfaces: Vec<QueriedInterface>,
     ) -> impl Future<Output = ()> + Send + Sync {
@@ -122,7 +122,7 @@ impl BeamQueryHandlerHandler for DerezzerQuery {
 
     fn moved(
         &self,
-        _ctx: gluon::Context,
+        _ctx: gluon_ipc::Context,
         _obj: QueryableId,
         _spatial_info: RayMarchResult,
     ) -> impl Future<Output = ()> + Send + Sync {
@@ -131,7 +131,7 @@ impl BeamQueryHandlerHandler for DerezzerQuery {
 
     fn left(
         &self,
-        _ctx: gluon::Context,
+        _ctx: gluon_ipc::Context,
         _obj: QueryableId,
     ) -> impl Future<Output = ()> + Send + Sync {
         ready(())
