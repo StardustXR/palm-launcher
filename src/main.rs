@@ -109,7 +109,7 @@ impl Reify for PalmLauncher {
         &self,
         context: &Context,
         _tasks: impl Tasker<Self>,
-		// _props: (),
+		_props: (),
     ) -> impl stardust_xr_asteroids::Element<Self> {
         let name = self.target.spatial_ref_info();
         // TODO: the coordinate space this makes is kinda terrible, should probabl be fixed

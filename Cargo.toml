@@ -1,6 +1,6 @@
 [package]
 name = "palm-launcher"
-version = "0.1.0"
+version = "0.53.0-rc.1"
 edition = "2024"
 
 [dependencies]
@@ -11,10 +11,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 # gluon-ipc = { git = "https://github.com/stardustxr/gluon-ipc" }
 # stardust-xr-molecules = { git = "https://github.com/StardustXR/molecules", version="0.52" }
 # protostar-launcher = { git = "https://github.com/StardustXR/protostar", version="0.1" }
-stardust-xr-asteroids = "0.52"
-stardust-xr-fusion = "0.52" 
-gluon-ipc = "0.1"
-stardust-xr-molecules = "0.52" 
+stardust-xr-asteroids = "0.53.0-rc.1"
+stardust-xr-fusion = "0.53.0-rc.1"
+gluon-ipc = "0.1.1"
+stardust-xr-molecules = "0.53.0-rc.1"
 protostar-launcher = { git = "https://github.com/StardustXR/protostar", version="0.1" }
 
 glam = { version = "0.33.0", features = ["mint", "serde"] }
