@@ -3,6 +3,9 @@ name = "palm-launcher"
 version = "0.53.0-rc.1"
 edition = "2024"
 
+[patch.crates-io]
+stardust-xr-asteroids.git = "https://github.com/StardustXR/asteroids.git"
+
 [dependencies]
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "rt", "macros"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -15,8 +18,11 @@ stardust-xr-asteroids = "0.53.0-rc.1"
 stardust-xr-fusion = "0.53.0-rc.1"
 gluon-ipc = "0.1.1"
 stardust-xr-molecules = "0.53.0-rc.1"
-protostar-launcher = { git = "https://github.com/StardustXR/protostar", version="0.1" }
+protostar-launcher = { git = "https://github.com/StardustXR/protostar", version = "0.1", features = [
+	"systemd_launching",
+] }
 
 glam = { version = "0.33.0", features = ["mint", "serde"] }
 tokio-stream = "0.1.18"
 tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

@@ -1,5 +1,4 @@
 pub mod derezzer;
-pub mod spatial_ref;
 pub mod spatial_ref_exposer;
 
 use std::{
@@ -14,7 +13,7 @@ use stardust_xr_asteroids::{
     ClientState, Context, CustomElement, Entity, Migrate, Reify, Tasker, Transformable,
     client::run,
     components::Grabbable,
-    elements::{Lines, Spatial, Text},
+    elements::{Lines, Spatial, Text, Tracked},
 };
 use stardust_xr_fusion::{
     client::FrameInfo,
@@ -23,13 +22,14 @@ use stardust_xr_fusion::{
     spatial::{PartialTransform, SpatialExt, SpatialRef, Transform},
     types::rgba_linear,
 };
+use tracing::{debug, info};
 
-use crate::{
-    derezzer::Derezzer, spatial_ref::ExternalSpatialRef, spatial_ref_exposer::SpatialRefExposer,
-};
+use crate::{derezzer::Derezzer, spatial_ref_exposer::SpatialRefExposer};
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt().init();
+
     run::<PalmLauncher>(&[]).await.unwrap();
 }
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -37,7 +37,7 @@ enum Action {
     #[default]
     Nothing,
     Command(String),
-    Destroy,
+    Derez,
 }
 #[derive(Debug, Serialize, Deserialize, Default)]
 enum Target {
@@ -63,20 +63,21 @@ impl FromStr for Target {
 impl Target {
     fn spatial_ref_info(&self) -> &'static str {
         match self {
-            Target::HandLeft => "stardust-hand/left",
-            Target::HandRight => "stardust-hand/right",
-            Target::ControllerLeft => "stardust-controller/left",
-            Target::ControllerRight => "stardust-controller/right",
+            Target::HandLeft => "stardust-hand/palm/left",
+            Target::HandRight => "stardust-hand/palm/right",
+            // TODO: maybe attach this to grip_surface?
+            Target::ControllerLeft => "stardust-controller/grip/left",
+            Target::ControllerRight => "stardust-controller/grip/right",
         }
     }
     fn offset(&self) -> (Vec3, Quat) {
         match self {
             Target::HandLeft => (
-                vec3(0.0, -0.02, 0.0),
+                vec3(0.0, -0.03, 0.0),
                 Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_z(FRAC_PI_2),
             ),
             Target::HandRight => (
-                vec3(0.0, -0.02, 0.0),
+                vec3(0.0, -0.03, 0.0),
                 Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_z(FRAC_PI_2),
             ),
             Target::ControllerLeft => (vec3(0.0, -0.01, 0.01), Quat::from_rotation_x(-FRAC_PI_3)),
@@ -109,166 +110,161 @@ impl Reify for PalmLauncher {
         &self,
         context: &Context,
         _tasks: impl Tasker<Self>,
-		_props: (),
+        _props: (),
     ) -> impl stardust_xr_asteroids::Element<Self> {
         let name = self.target.spatial_ref_info();
         // TODO: the coordinate space this makes is kinda terrible, should probabl be fixed
         let (pos, rot) = self.target.offset();
-        ExternalSpatialRef::new(name)
-            .tracked_changed(|state: &mut PalmLauncher, tracked| {
-                println!("tracked state changed: {tracked}");
-                state.visible = tracked;
-                state.pos = Vec3::ZERO;
-                state.rot = Quat::IDENTITY;
-                state.state = Action::Nothing;
-            })
-            .build()
-            // .child(Axes::default().build())
-            .maybe_child(self.visible.then(|| {
-                let client = context.stardust_client.clone();
-                Spatial::default()
-                    .pos(pos)
-                    .rot(rot)
+        Tracked::new(name, |state: &mut PalmLauncher, tracked| {
+            debug!("tracked state changed: {tracked}");
+            state.visible = tracked;
+            state.pos = Vec3::ZERO;
+            state.rot = Quat::IDENTITY;
+            state.state = Action::Nothing;
+        })
+        .build()
+        // .child(Axes::default().build())
+        .maybe_child(self.visible.then(|| {
+            let client = context.stardust_client.clone();
+            Spatial::default()
+                .pos(pos)
+                .rot(rot)
+                .build()
+                // .child(Axes::default().build())
+                .child(
+                    Lines::new([Line {
+                        points: {
+                            let color = match &self.state {
+                                Action::Nothing => {
+                                    context.accent_color.color() * rgba_linear!(0.1, 0.1, 0.1, 1.0)
+                                }
+                                Action::Command(_) => {
+                                    context.accent_color.color() * rgba_linear!(0.8, 0.8, 0.8, 1.0)
+                                }
+                                Action::Derez => rgba_linear!(1., 0., 0., 1.),
+                            };
+                            vec![
+                                LinePoint {
+                                    point: Vec3::ZERO.into(),
+                                    thickness: 0.001,
+                                    color,
+                                },
+                                LinePoint {
+                                    point: self.pos.into(),
+                                    thickness: 0.001,
+                                    color,
+                                },
+                            ]
+                        },
+                        cyclic: false,
+                    }])
+                    .build(),
+                )
+                .maybe_child(if let Action::Command(cmd) = &self.state {
+                    let quat = Quat::from_rotation_arc(Vec3::Y, self.pos.normalize())
+                        * self.target.text_rot();
+                    Some(
+                        Text::new(cmd)
+                            .rot(quat)
+                            .pos((self.pos * 0.5) + (quat.mul_vec3(Vec3::Y * 0.01)))
+                            .build(),
+                    )
+                } else {
+                    None
+                })
+                .child(
+                    SpatialRefExposer::new(|state: &mut Self, spatial_ref| {
+                        state.handle_ref = Some(spatial_ref)
+                    })
+                    .build(),
+                )
+                .maybe_child(matches!(self.state, Action::Derez).then(|| {
+                    Derezzer::new(
+                        Vec3::ZERO,
+                        Quat::from_rotation_arc(Vec3::NEG_Z, self.pos.normalize()),
+                        self.pos.length(),
+                    )
                     .build()
-                    // .child(Axes::default().build())
+                }))
+                .child(
+                    Entity::new(Shape::Cylinder {
+                        length: 0.02,
+                        radius: 0.002,
+                    })
+                    .pos(self.pos)
+                    .rot(self.rot)
+                    .component(
+                        Grabbable::new(|state: &mut PalmLauncher, pose| {
+                            state.pos = pose.position.into();
+                            state.rot = pose.orientation.into()
+                        })
+                        .max_distance(0.03f32)
+                        .grab_stop(move |state: &mut PalmLauncher| {
+                            let client = client.clone();
+                            if let Action::Command(cmd) = &state.state {
+                                let cmd = cmd.clone();
+                                let spatial_ref = state.handle_ref.clone().unwrap();
+                                let pos = state.pos;
+                                tokio::spawn(async move {
+                                    let (spatial, spatial_ref) =
+                                        stardust_xr_fusion::spatial::Spatial::new(
+                                            &client,
+                                            &spatial_ref,
+                                            Transform::from_translation(pos * 0.5),
+                                        )
+                                        .await
+                                        .unwrap();
+
+                                    _ = spatial.set_relative_transform(
+                                        client.root().clone(),
+                                        PartialTransform::from_rotation_scale(
+                                            Quat::IDENTITY,
+                                            Vec3::ONE,
+                                        ),
+                                    );
+                                    let token =
+                                        client.generate_startup_token(spatial_ref).await.unwrap();
+                                    info!("launching \"{cmd}\"");
+                                    // TODO: should probably do proper shell parsing on the cmd and
+                                    // launch that directly, this is kinda ugly!
+                                    protostar_launcher::launch(
+                                        ["sh", "-c", &cmd],
+                                        [("STARDUST_STARTUP_TOKEN".to_string(), token)],
+                                    )
+                                    .await;
+                                });
+                            }
+                            state.pos = Vec3::ZERO;
+                            state.rot = Quat::IDENTITY;
+                            debug!("grab stopped");
+                            state.state = Action::Nothing;
+                        }),
+                    )
+                    .build()
                     .child(
                         Lines::new([Line {
-                            points: {
-                                let color = match &self.state {
-                                    Action::Nothing => {
-                                        context.accent_color.color()
-                                            * rgba_linear!(0.1, 0.1, 0.1, 1.0)
-                                    }
-                                    Action::Command(_) => {
-                                        context.accent_color.color()
-                                            * rgba_linear!(0.8, 0.8, 0.8, 1.0)
-                                    }
-                                    Action::Destroy => rgba_linear!(1., 0., 0., 1.),
-                                };
-                                vec![
-                                    LinePoint {
-                                        point: Vec3::ZERO.into(),
-                                        thickness: 0.001,
-                                        color,
-                                    },
-                                    LinePoint {
-                                        point: self.pos.into(),
-                                        thickness: 0.001,
-                                        color,
-                                    },
-                                ]
-                            },
+                            points: vec![
+                                LinePoint {
+                                    point: vec3(0.0, -0.01, 0.0).into(),
+                                    thickness: 0.002,
+                                    color: rgba_linear!(1., 1., 1., 1.),
+                                },
+                                LinePoint {
+                                    point: vec3(0.0, 0.01, 0.0).into(),
+                                    thickness: 0.002,
+                                    color: rgba_linear!(1., 1., 1., 1.),
+                                },
+                            ],
                             cyclic: false,
                         }])
                         .build(),
-                    )
-                    .maybe_child(if let Action::Command(cmd) = &self.state {
-                        let quat = Quat::from_rotation_arc(Vec3::Y, self.pos.normalize())
-                            * self.target.text_rot();
-                        Some(
-                            Text::new(cmd)
-                                .rot(quat)
-                                .pos((self.pos * 0.5) + (quat.mul_vec3(Vec3::Y * 0.01)))
-                                .build(),
-                        )
-                    } else {
-                        None
-                    })
-                    .child(
-                        SpatialRefExposer::new(|state: &mut Self, spatial_ref| {
-                            state.handle_ref = Some(spatial_ref)
-                        })
-                        .build(),
-                    )
-                    .maybe_child(matches!(self.state, Action::Destroy).then(|| {
-                        Derezzer::new(
-                            Vec3::ZERO,
-                            Quat::from_rotation_arc(Vec3::NEG_Z, self.pos.normalize()),
-                            self.pos.length(),
-                        )
-                        .build()
-                    }))
-                    .child(
-                        Entity::new(Shape::Cylinder {
-                            length: 0.02,
-                            radius: 0.002,
-                        })
-                        .pos(self.pos)
-                        .rot(self.rot)
-                        .component(
-                            Grabbable::new(|state: &mut PalmLauncher, pose| {
-                                state.pos = pose.position.into();
-                                state.rot = pose.orientation.into()
-                            })
-                            .max_distance(0.025f32)
-                            .grab_stop(
-                                move |state: &mut PalmLauncher| {
-                                    let client = client.clone();
-                                    if let Action::Command(cmd) = &state.state {
-                                        let cmd = cmd.clone();
-                                        let spatial_ref = state.handle_ref.clone().unwrap();
-                                        let pos = state.pos;
-                                        tokio::spawn(async move {
-                                            let (spatial, spatial_ref) =
-                                                stardust_xr_fusion::spatial::Spatial::new(
-                                                    &client,
-                                                    &spatial_ref,
-                                                    Transform::from_translation(pos * 0.5),
-                                                )
-                                                .await
-                                                .unwrap();
-
-                                            _ = spatial.set_relative_transform(
-                                                client.root().clone(),
-                                                PartialTransform::from_rotation_scale(
-                                                    Quat::IDENTITY,
-                                                    Vec3::ONE,
-                                                ),
-                                            );
-                                            let token = client
-                                                .generate_startup_token(spatial_ref)
-                                                .await
-                                                .unwrap();
-                                            // TODO: should this use "sh -c {cmd}" to run the thingy?
-                                            protostar_launcher::launch(
-                                                cmd.into(),
-                                                [("STARDUST_STARTUP_TOKEN".to_string(), token)],
-                                            )
-                                            .await;
-                                        });
-                                    }
-                                    state.pos = Vec3::ZERO;
-                                    state.rot = Quat::IDENTITY;
-                                    println!("grab stopped");
-                                    state.state = Action::Nothing;
-                                },
-                            ),
-                        )
-                        .build()
-                        .child(
-                            Lines::new([Line {
-                                points: vec![
-                                    LinePoint {
-                                        point: vec3(0.0, -0.01, 0.0).into(),
-                                        thickness: 0.002,
-                                        color: rgba_linear!(1., 1., 1., 1.),
-                                    },
-                                    LinePoint {
-                                        point: vec3(0.0, 0.01, 0.0).into(),
-                                        thickness: 0.002,
-                                        color: rgba_linear!(1., 1., 1., 1.),
-                                    },
-                                ],
-                                cyclic: false,
-                            }])
-                            .build(),
-                        ),
-                    )
-            }))
+                    ),
+                )
+        }))
     }
 }
 impl ClientState for PalmLauncher {
-    const APP_ID: &'static str = "dev.schmarni.palmlauncher";
+    const APP_ID: &'static str = "org.stardustxr.PalmLauncher";
 
     fn initial_state_update(&mut self) {
         let mut args = env::args().into_iter().skip(1);
@@ -283,13 +279,13 @@ impl ClientState for PalmLauncher {
         self.commands = args;
     }
 
-    fn on_frame(&mut self, _info: &FrameInfo) {
+    fn on_frame(&mut self, _ctx: &Context, _info: &FrameInfo) {
         let v = 0.5 / self.commands.len() as f32;
         let index = (self.pos.length() / v).floor() as usize;
         self.state = if index == 0 {
             Action::Nothing
         } else if index > self.commands.len() {
-            Action::Destroy
+            Action::Derez
         } else {
             let index = index - 1;
             Action::Command(self.commands[index].clone())
