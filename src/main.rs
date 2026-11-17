@@ -1,4 +1,3 @@
-pub mod derezzer;
 pub mod spatial_ref_exposer;
 
 use std::{
@@ -13,7 +12,7 @@ use stardust_xr_asteroids::{
     ClientState, Context, CustomElement, Entity, Migrate, Reify, Tasker, Transformable,
     client::run,
     components::Grabbable,
-    elements::{Lines, Spatial, Text, Tracked},
+    elements::{BeamQuery, Lines, Spatial, Text, Tracked},
 };
 use stardust_xr_fusion::{
     client::FrameInfo,
@@ -22,9 +21,10 @@ use stardust_xr_fusion::{
     spatial::{PartialTransform, SpatialExt, SpatialRef, Transform},
     types::rgba_linear,
 };
+use stardust_xr_molecules::derezzable::protocol::Derezzable;
 use tracing::{debug, info};
 
-use crate::{derezzer::Derezzer, spatial_ref_exposer::SpatialRefExposer};
+use crate::spatial_ref_exposer::SpatialRefExposer;
 
 #[tokio::main]
 async fn main() {
@@ -179,11 +179,17 @@ impl Reify for PalmLauncher {
                     .build(),
                 )
                 .maybe_child(matches!(self.state, Action::Derez).then(|| {
-                    Derezzer::new(
+                    BeamQuery::new(
                         Vec3::ZERO,
-                        Quat::from_rotation_arc(Vec3::NEG_Z, self.pos.normalize()),
-                        self.pos.length(),
+                        self.pos.normalize(),
+                        |_: &mut Self, _, _, _, (derezzable,): (Derezzable,), _| {
+                            _ = derezzable.derez();
+                        },
+                        |_, _, _| {},
+                        |_, _, _| {},
+                        |_, _| {},
                     )
+                    .max_length(self.pos.length())
                     .build()
                 }))
                 .child(
