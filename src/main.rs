@@ -1,4 +1,4 @@
-pub mod spatial_ref_exposer;
+pub mod app_launcher;
 
 use std::{
     env,
@@ -18,13 +18,12 @@ use stardust_xr_fusion::{
     client::FrameInfo,
     drawable::{Line, LinePoint},
     fields::Shape,
-    spatial::{PartialTransform, SpatialExt, SpatialRef, Transform},
     types::rgba_linear,
 };
 use stardust_xr_molecules::derezzable::protocol::Derezzable;
-use tracing::{debug, info};
+use tracing::debug;
 
-use crate::spatial_ref_exposer::SpatialRefExposer;
+use crate::app_launcher::AppLauncher;
 
 #[tokio::main]
 async fn main() {
@@ -100,7 +99,7 @@ struct PalmLauncher {
     rot: Quat,
     state: Action,
     #[serde(skip)]
-    handle_ref: Option<SpatialRef>,
+    launching: Option<(String, Vec3)>,
     commands: Vec<String>,
     visible: bool,
 }
@@ -125,7 +124,6 @@ impl Reify for PalmLauncher {
         .build()
         // .child(Axes::default().build())
         .maybe_child(self.visible.then(|| {
-            let client = context.stardust_client.clone();
             Spatial::default()
                 .pos(pos)
                 .rot(rot)
@@ -172,12 +170,11 @@ impl Reify for PalmLauncher {
                 } else {
                     None
                 })
-                .child(
-                    SpatialRefExposer::new(|state: &mut Self, spatial_ref| {
-                        state.handle_ref = Some(spatial_ref)
-                    })
-                    .build(),
-                )
+                .maybe_child(self.launching.as_ref().map(|(cmd, pos)| {
+                    AppLauncher::new(cmd, *pos)
+                        .done(|state: &mut Self| state.launching = None)
+                        .build()
+                }))
                 .maybe_child(matches!(self.state, Action::Derez).then(|| {
                     BeamQuery::new(
                         Vec3::ZERO,
@@ -205,40 +202,9 @@ impl Reify for PalmLauncher {
                             state.rot = pose.orientation.into()
                         })
                         .max_distance(0.03f32)
-                        .grab_stop(move |state: &mut PalmLauncher| {
-                            let client = client.clone();
+                        .grab_stop(|state: &mut PalmLauncher| {
                             if let Action::Command(cmd) = &state.state {
-                                let cmd = cmd.clone();
-                                let spatial_ref = state.handle_ref.clone().unwrap();
-                                let pos = state.pos;
-                                tokio::spawn(async move {
-                                    let (spatial, spatial_ref) =
-                                        stardust_xr_fusion::spatial::Spatial::new(
-                                            &client,
-                                            &spatial_ref,
-                                            Transform::from_translation(pos * 0.5),
-                                        )
-                                        .await
-                                        .unwrap();
-
-                                    _ = spatial.set_relative_transform(
-                                        client.root().clone(),
-                                        PartialTransform::from_rotation_scale(
-                                            Quat::IDENTITY,
-                                            Vec3::ONE,
-                                        ),
-                                    );
-                                    let token =
-                                        client.generate_startup_token(spatial_ref).await.unwrap();
-                                    info!("launching \"{cmd}\"");
-                                    // TODO: should probably do proper shell parsing on the cmd and
-                                    // launch that directly, this is kinda ugly!
-                                    protostar_launcher::launch(
-                                        ["sh", "-c", &cmd],
-                                        [("STARDUST_STARTUP_TOKEN".to_string(), token)],
-                                    )
-                                    .await;
-                                });
+                                state.launching = Some((cmd.clone(), state.pos * 0.5));
                             }
                             state.pos = Vec3::ZERO;
                             state.rot = Quat::IDENTITY;
