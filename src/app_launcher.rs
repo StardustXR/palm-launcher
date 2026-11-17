@@ -1,6 +1,4 @@
-use std::f32::consts::FRAC_PI_2;
-
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec3, vec3};
 use stardust_xr_asteroids::{Context, CreateInnerInfo, CustomElement, FnWrapper, ValidState};
 use stardust_xr_fusion::{
     client::FrameInfo,
@@ -9,7 +7,7 @@ use stardust_xr_fusion::{
 use tracing::info;
 
 /// launches a shell command once at `pos`, upright to the client root and facing
-/// sideways to the line from the parent's origin to `pos`
+/// sideways off the line from the parent's origin to `pos`, on the side the parent's +Z faces
 pub struct AppLauncher<State: ValidState> {
     cmd: String,
     pos: Vec3,
@@ -55,11 +53,14 @@ impl<State: ValidState> CustomElement<State> for AppLauncher<State> {
         let t = spatial
             .get_relative_transform(client.root().clone())
             .await??;
-        let d = Quat::from(t.rotation) * self.pos;
+        let r = Quat::from(t.rotation);
+        let d = r * self.pos;
+        let f = vec3(-d.z, 0.0, d.x);
+        let f = if f.dot(r * Vec3::Z) < 0.0 { -f } else { f };
         spatial.set_parent(client.root().clone())?;
         spatial.set_local_transform(Transform {
             translation: t.translation,
-            rotation: Quat::from_rotation_y(d.x.atan2(d.z) - FRAC_PI_2).into(),
+            rotation: Quat::from_rotation_y(f.x.atan2(f.z)).into(),
             scale: Vec3::ONE.into(),
         })?;
         Ok((spatial, Some(spatial_ref)))

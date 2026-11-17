@@ -2,7 +2,7 @@ pub mod app_launcher;
 
 use std::{
     env,
-    f32::consts::{FRAC_PI_2, FRAC_PI_3, PI},
+    f32::consts::{FRAC_PI_2, FRAC_PI_3},
     str::FromStr,
 };
 
@@ -69,27 +69,31 @@ impl Target {
             Target::ControllerRight => "stardust-controller/grip/right",
         }
     }
+    fn mirrored(&self) -> bool {
+        matches!(self, Target::HandRight | Target::ControllerRight)
+    }
+    /// offsets are authored for the left side, openxr's right side spaces are the left's
+    /// mirrored with their local X flipped, so mirroring across X gives the matching pose
+    fn mirror(&self, p: Vec3, r: Quat) -> (Vec3, Quat) {
+        if self.mirrored() {
+            (vec3(-p.x, p.y, p.z), Quat::from_xyzw(r.x, -r.y, -r.z, r.w))
+        } else {
+            (p, r)
+        }
+    }
     fn offset(&self) -> (Vec3, Quat) {
         match self {
-            Target::HandLeft => (
-                vec3(0.0, -0.03, 0.0),
-                Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_z(FRAC_PI_2),
+            Target::HandLeft | Target::HandRight => {
+                self.mirror(vec3(-0.05, 0.0, 0.0), Quat::from_rotation_x(FRAC_PI_2))
+            }
+            Target::ControllerLeft | Target::ControllerRight => self.mirror(
+                vec3(0.0, -0.01, 0.01),
+                Quat::from_rotation_x(-FRAC_PI_3 - FRAC_PI_2),
             ),
-            Target::HandRight => (
-                vec3(0.0, -0.03, 0.0),
-                Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_z(FRAC_PI_2),
-            ),
-            Target::ControllerLeft => (vec3(0.0, -0.01, 0.01), Quat::from_rotation_x(-FRAC_PI_3)),
-            Target::ControllerRight => todo!(),
         }
     }
     fn text_rot(&self) -> Quat {
-        match self {
-            Target::HandLeft => Quat::from_rotation_z(FRAC_PI_2),
-            Target::HandRight => Quat::from_rotation_z(-FRAC_PI_2) * Quat::from_rotation_x(PI),
-            Target::ControllerLeft => Quat::from_rotation_z(FRAC_PI_2),
-            Target::ControllerRight => todo!(),
-        }
+        self.mirror(Vec3::ZERO, Quat::from_rotation_z(FRAC_PI_2)).1
     }
 }
 #[derive(Debug, Serialize, Deserialize, Default)]
