@@ -83,9 +83,10 @@ impl Target {
     }
     fn offset(&self) -> (Vec3, Quat) {
         match self {
-            Target::HandLeft | Target::HandRight => {
-                self.mirror(vec3(-0.05, 0.0, 0.0), Quat::from_rotation_x(FRAC_PI_2))
-            }
+            Target::HandLeft | Target::HandRight => self.mirror(
+                vec3(0.0, -0.03, 0.0),
+                Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_z(FRAC_PI_2),
+            ),
             Target::ControllerLeft | Target::ControllerRight => self.mirror(
                 vec3(0.0, -0.01, 0.01),
                 Quat::from_rotation_x(-FRAC_PI_3 - FRAC_PI_2),
